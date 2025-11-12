@@ -5,15 +5,17 @@ editor: visual
 ---
 
 ## 
+
 ```{r}
 library (tidyverse)
 library(tidymodels)
 library (ggcharts)
 
 ```
-
+## Reading and validating data
 
 Reading CSV file
+
 ```{r}
 bike_rentals <- read_csv("https://www4.stat.ncsu.edu/~online/datasets/SeoulBikeData.csv", 
                               locale = locale(encoding = "latin1"),
@@ -21,6 +23,9 @@ bike_rentals <- read_csv("https://www4.stat.ncsu.edu/~online/datasets/SeoulBikeD
 bike_rentals
 
 ```
+
+Renaming variables for easy use
+
 ```{r}
 bike_rentals <- bike_rentals |>
   rename("temp" = "temperaturec",
@@ -33,18 +38,21 @@ bike_rentals <- bike_rentals |>
 
 ```
 
-
+Validating numeric data
 
 ```{r}
 psych::describe(bike_rentals)
 ```
-From the above `psych::describe`, there are no missing data in any of the columns
 
-total missing values in each column
+From the above `psych::describe`, there are no missing data in any of the columns with summary looks proper.
+
+Checking missing values for each column
+
 ```{r}
 sapply (bike_rentals, function (x)sum (is.na(x)))
 
 ```
+
 Checking unique values for the categorical variables
 
 ```{r}
@@ -53,6 +61,9 @@ unique(bike_rentals$holiday)
 unique(bike_rentals$functioning_day)
 
 ```
+
+Creating factors of the categorical variables
+
 ```{r}
 bike_rentals <- bike_rentals |>
   mutate(date = dmy(date),
@@ -64,6 +75,7 @@ bike_rentals
 ```
 
 Subsetting on `functioning_day = Yes` as summary on the rented bike count is all `0`
+
 ```{r}
 bike_rentals |>
   filter(functioning_day == "No") |>
@@ -72,7 +84,9 @@ bike_rentals |>
                    list("mean" = mean, "median" = median, "sd" = sd ),
                    .names = "{.fn}_{.col}"))
 ```
+
 Calculating sum across `rented_bike_count`, `rainfall` and `snowfall` variables and mean across the weather variables for final model data sets
+
 ```{r}
 bike_model_data <- bike_rentals |>
   filter(functioning_day == "Yes") |>
@@ -85,9 +99,11 @@ bike_model_data <- bike_rentals |>
          mean_visibility, mean_dew_point_temp, mean_solar_radiation)
 bike_model_data
 ```
-##Summary plots
+
+## Summary plots
 
 Creating box plots for total bike rental with categorical variables
+
 ```{r}
 ggplot(data = bike_model_data,
       aes(x = seasons, y = total_rented_bike_count, fill = seasons)) + 
@@ -95,6 +111,7 @@ ggplot(data = bike_model_data,
   geom_jitter(width = 0.2, alpha = 0.4)
 
 ```
+
 From the above box plot , we can say that season direct influence on the bike rental count with winter being the slow season and summer being the high season.
 
 ```{r}
@@ -104,15 +121,18 @@ ggplot(data = bike_model_data,
   geom_jitter(width = 0.2, alpha = 0.4)
 
 ```
+
 The above box plot shows that there are less outliers for bike rented during non holidays than holidays.
 
 Creating scatter plots for numerical variables
+
 ```{r}
 ggplot(data = bike_model_data,
       aes(x = total_rainfall, y = total_rented_bike_count, color = holiday)) +
   geom_point() + geom_smooth(method = lm)
 
 ```
+
 The above scatter plot shows that there is high correlation between rainfall amount and bike rented count. Also the rental count is affected by holiday as well.
 
 ```{r}
@@ -120,22 +140,27 @@ ggplot(data = bike_model_data,
       aes(x = total_rainfall, y = total_rented_bike_count, color = seasons)) +
   geom_point() + geom_smooth(method = lm)
 ```
+
 From the above line graph, apart of from rainfall, there is some correlation between the bike rental count and seasons as well.
+
 ```{r}
 ggplot(data = bike_model_data,
       aes(x = mean_temp, y = total_rented_bike_count, color = holiday)) +
   geom_point() + geom_smooth(method = lm)
 ```
+
 From the above graph, when the temp increases the bike rental count also increases, with temperature in the range 2o to 25 being more favorable. Also from the line fit on holiday shows that holiday has some effect in the total bike rent count.
+
 ```{r}
 ggplot(data = bike_model_data,
       aes(x = mean_temp, y = total_rented_bike_count, color = seasons)) +
   geom_point() + geom_smooth(method = lm)
 
 ```
+
 From the above graph, when the temp increases the bike rental count also increases, with temperature in the range 2o to 25 being more favorable. Apart from temperature, the season also affect the total bike rental count. As shown in graph in summer bike rental count increases than in winter.
 
-##Data modeling
+## Data modeling
 
 Creating the model data with training and testing set
 
@@ -149,11 +174,13 @@ bike_rentals_train <- training(bike_rentals_split)
 bike_rentals_test <- testing(bike_rentals_split)
 
 ```
+
 10 fold CV of the training data
 
 ```{r}
 bike_rentals_cv <- vfold_cv(bike_rentals_train, 10)
 ```
+
 Creating different recipes
 
 ```{r}
@@ -203,7 +230,7 @@ recipe3 |>
   bake(bike_rentals_train)
 ```
 
-##Fitting linear model
+## Fitting linear model
 
 Set the linear regression engine to "lm"
 
@@ -211,6 +238,7 @@ Set the linear regression engine to "lm"
 MLR_spec <- linear_reg() |>
   set_engine("lm")
 ```
+
 creating workflows for model
 
 ```{r}
@@ -227,7 +255,7 @@ MLR_wkf3 <- workflow()|>
   add_model(MLR_spec)
 ```
 
-Fitting the models with the cross validation folds 
+Fitting the models with the cross validation folds
 
 ```{r}
 MLR_fit1 <- MLR_wkf1 |>
@@ -240,6 +268,7 @@ MLR_fit3 <- MLR_wkf3 |>
   fit_resamples(bike_rentals_cv)
 
 ```
+
 Collecting metrices from each of the fit
 
 ```{r}
@@ -249,9 +278,10 @@ rbind(MLR_fit1 |> collect_metrics() |> filter(.metric == "rmse"),
   mutate(Model = c("Model 1", "Model 2", "Model 3")) |>
   select(Model, mean, n, std_err)
 ```
+
 From the above table, we can see that Model 2 has the the least rmse
 
-Fitting the best model (model 2) to entire training set date, 
+Fitting the best model (model 2) to entire training set date,
 
 ```{r}
 MLR_wkf2 |>
@@ -259,6 +289,7 @@ MLR_wkf2 |>
   collect_metrics()
 
 ```
+
 fitting the final model
 
 ```{r}
@@ -266,7 +297,8 @@ final_model <- MLR_wkf2 |>
   fit(bike_rentals_train)
 tidy(final_model)
 ```
- extracting the final model fit in lm form
+
+extracting the final model fit in lm form
 
 ```{r}
 my_fit <- extract_fit_parsnip(final_model)
@@ -274,4 +306,3 @@ lm_fit <- my_fit$fit
 summary(lm_fit)
 
 ```
-
