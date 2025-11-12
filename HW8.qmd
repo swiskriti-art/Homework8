@@ -1,0 +1,277 @@
+---
+title: "HW8"
+format: html
+editor: visual
+---
+
+## 
+```{r}
+library (tidyverse)
+library(tidymodels)
+library (ggcharts)
+
+```
+
+
+Reading CSV file
+```{r}
+bike_rentals <- read_csv("https://www4.stat.ncsu.edu/~online/datasets/SeoulBikeData.csv", 
+                              locale = locale(encoding = "latin1"),
+                         name_repair = function(nm) str_to_lower(str_replace_all(str_replace_all(nm, " ", "_"), "[()/°%]", "")))
+bike_rentals
+
+```
+```{r}
+bike_rentals <- bike_rentals |>
+  rename("temp" = "temperaturec",
+         "wind_speed" = "wind_speed_ms",
+         "visibility" = `visibility_10m`,
+         "dew_point_temp" = "dew_point_temperaturec",
+         "rainfall" = "rainfallmm",
+         "solar_radiation" = "solar_radiation_mjm2",
+         "snowfall" = "snowfall_cm")
+
+```
+
+
+
+```{r}
+psych::describe(bike_rentals)
+```
+From the above `psych::describe`, there are no missing data in any of the columns
+
+total missing values in each column
+```{r}
+sapply (bike_rentals, function (x)sum (is.na(x)))
+
+```
+Checking unique values for the categorical variables
+
+```{r}
+unique(bike_rentals$seasons)
+unique(bike_rentals$holiday)
+unique(bike_rentals$functioning_day)
+
+```
+```{r}
+bike_rentals <- bike_rentals |>
+  mutate(date = dmy(date),
+         seasons = as.factor(seasons),
+         holiday = as.factor(holiday),
+         functioning_day = as.factor(functioning_day)
+        )
+bike_rentals
+```
+
+Subsetting on `functioning_day = Yes` as summary on the rented bike count is all `0`
+```{r}
+bike_rentals |>
+  filter(functioning_day == "No") |>
+  group_by(date, seasons, holiday, functioning_day) |>
+  summarize(across(rented_bike_count, 
+                   list("mean" = mean, "median" = median, "sd" = sd ),
+                   .names = "{.fn}_{.col}"))
+```
+Calculating sum across `rented_bike_count`, `rainfall` and `snowfall` variables and mean across the weather variables for final model data sets
+```{r}
+bike_model_data <- bike_rentals |>
+  filter(functioning_day == "Yes") |>
+  group_by(date, seasons, holiday) |>
+  summarize(across(c(rented_bike_count, rainfall, snowfall, temp, humidity, wind_speed, visibility,
+                     dew_point_temp, solar_radiation),
+                   .fns = list("total" = sum, "mean" = mean),
+                   .names = "{.fn}_{.col}")) |>
+  select(date, seasons, holiday, total_rented_bike_count, total_rainfall, total_snowfall, mean_temp, mean_humidity, mean_wind_speed,
+         mean_visibility, mean_dew_point_temp, mean_solar_radiation)
+bike_model_data
+```
+##Summary plots
+
+Creating box plots for total bike rental with categorical variables
+```{r}
+ggplot(data = bike_model_data,
+      aes(x = seasons, y = total_rented_bike_count, fill = seasons)) + 
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.4)
+
+```
+From the above box plot , we can say that season direct influence on the bike rental count with winter being the slow season and summer being the high season.
+
+```{r}
+ggplot(data = bike_model_data,
+      aes(x = holiday, y = total_rented_bike_count, fill = holiday)) + 
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.4)
+
+```
+The above box plot shows that there are less outliers for bike rented during non holidays than holidays.
+
+Creating scatter plots for numerical variables
+```{r}
+ggplot(data = bike_model_data,
+      aes(x = total_rainfall, y = total_rented_bike_count, color = holiday)) +
+  geom_point() + geom_smooth(method = lm)
+
+```
+The above scatter plot shows that there is high correlation between rainfall amount and bike rented count. Also the rental count is affected by holiday as well.
+
+```{r}
+ggplot(data = bike_model_data,
+      aes(x = total_rainfall, y = total_rented_bike_count, color = seasons)) +
+  geom_point() + geom_smooth(method = lm)
+```
+From the above line graph, apart of from rainfall, there is some correlation between the bike rental count and seasons as well.
+```{r}
+ggplot(data = bike_model_data,
+      aes(x = mean_temp, y = total_rented_bike_count, color = holiday)) +
+  geom_point() + geom_smooth(method = lm)
+```
+From the above graph, when the temp increases the bike rental count also increases, with temperature in the range 2o to 25 being more favorable. Also from the line fit on holiday shows that holiday has some effect in the total bike rent count.
+```{r}
+ggplot(data = bike_model_data,
+      aes(x = mean_temp, y = total_rented_bike_count, color = seasons)) +
+  geom_point() + geom_smooth(method = lm)
+
+```
+From the above graph, when the temp increases the bike rental count also increases, with temperature in the range 2o to 25 being more favorable. Apart from temperature, the season also affect the total bike rental count. As shown in graph in summer bike rental count increases than in winter.
+
+##Data modeling
+
+Creating the model data with training and testing set
+
+```{r}
+bike_model_log <- bike_model_data |>
+  mutate(log_bike_rentals = log(total_rented_bike_count)) |>
+  select(-total_rented_bike_count)
+
+bike_rentals_split <- initial_split(bike_model_log, prop = 0.75, strata = seasons)
+bike_rentals_train <- training(bike_rentals_split)
+bike_rentals_test <- testing(bike_rentals_split)
+
+```
+10 fold CV of the training data
+
+```{r}
+bike_rentals_cv <- vfold_cv(bike_rentals_train, 10)
+```
+Creating different recipes
+
+```{r}
+recipe1 <- recipe(log_bike_rentals ~ ., data = bike_rentals_train) |>
+  step_date(date, features = c("dow")) |>
+  step_mutate(day_type = factor(if_else(date_dow %in% c("Sat", "Sun"), "Weekend", "Weekday"))) |>
+  step_rm(date) |>
+  step_rm(starts_with("date_dow")) |>
+  step_normalize(all_numeric(), -all_outcomes()) |>
+  step_dummy(seasons, holiday, day_type) 
+
+recipe1 |>
+  prep(training = bike_rentals_train) |>
+  bake(bike_rentals_train)
+
+recipe2 <- recipe(log_bike_rentals ~ ., data = bike_rentals_train) |>
+  step_date(date, features = c("dow")) |>
+  step_mutate(day_type = factor(if_else(date_dow %in% c("Sat", "Sun"), "Weekend", "Weekday"))) |>
+  step_rm(date) |>
+  step_rm(starts_with("date_dow")) |>
+  step_normalize(all_numeric(), -all_outcomes()) |>
+  step_dummy(seasons, holiday, day_type) |>
+  step_interact(terms = ~starts_with("holiday")*starts_with("seasons") ) |>
+  step_interact(terms = ~mean_temp*starts_with("seasons")) |>
+  step_interact(terms = ~mean_temp*total_rainfall)
+
+recipe2 |>
+  prep(training = bike_rentals_train) |>
+  bake(bike_rentals_train)
+
+recipe3 <- recipe(log_bike_rentals ~ ., data = bike_rentals_train) |>
+  step_date(date, features = c("dow")) |>
+  step_mutate(day_type = factor(if_else(date_dow %in% c("Sat", "Sun"), "Weekend", "Weekday"))) |>
+  step_rm(date) |>
+  step_rm(starts_with("date_dow")) |>
+  step_normalize(all_numeric(), -all_outcomes()) |>
+  step_zv(seasons, holiday, day_type) |>
+  step_dummy(seasons, holiday, day_type) |>
+  step_interact(terms = ~starts_with("holiday")*starts_with("seasons") ) |>
+  step_interact(terms = ~mean_temp*starts_with("seasons")) |>
+  step_interact(terms = ~mean_temp*total_rainfall)|>
+  step_poly(total_rainfall, total_snowfall, mean_temp, mean_humidity, mean_wind_speed,
+         mean_visibility, mean_dew_point_temp, mean_solar_radiation, degree = 2)
+
+recipe3 |>
+  prep(training = bike_rentals_train) |>
+  bake(bike_rentals_train)
+```
+
+##Fitting linear model
+
+Set the linear regression engine to "lm"
+
+```{r}
+MLR_spec <- linear_reg() |>
+  set_engine("lm")
+```
+creating workflows for model
+
+```{r}
+MLR_wkf1 <- workflow()|>
+  add_recipe(recipe1) |>
+  add_model(MLR_spec)
+
+MLR_wkf2 <- workflow()|>
+  add_recipe(recipe2) |>
+  add_model(MLR_spec)
+
+MLR_wkf3 <- workflow()|>
+  add_recipe(recipe3) |>
+  add_model(MLR_spec)
+```
+
+Fitting the models with the cross validation folds 
+
+```{r}
+MLR_fit1 <- MLR_wkf1 |>
+  fit_resamples(bike_rentals_cv)
+
+MLR_fit2 <- MLR_wkf2 |>
+  fit_resamples(bike_rentals_cv)
+
+MLR_fit3 <- MLR_wkf3 |>
+  fit_resamples(bike_rentals_cv)
+
+```
+Collecting metrices from each of the fit
+
+```{r}
+rbind(MLR_fit1 |> collect_metrics() |> filter(.metric == "rmse"),
+      MLR_fit2 |> collect_metrics() |> filter(.metric == "rmse"),
+      MLR_fit3 |> collect_metrics() |> filter(.metric == "rmse")) |> 
+  mutate(Model = c("Model 1", "Model 2", "Model 3")) |>
+  select(Model, mean, n, std_err)
+```
+From the above table, we can see that Model 2 has the the least rmse
+
+Fitting the best model (model 2) to entire training set date, 
+
+```{r}
+MLR_wkf2 |>
+  last_fit(bike_rentals_split) |>
+  collect_metrics()
+
+```
+fitting the final model
+
+```{r}
+final_model <- MLR_wkf2 |>
+  fit(bike_rentals_train)
+tidy(final_model)
+```
+ extracting the final model fit in lm form
+
+```{r}
+my_fit <- extract_fit_parsnip(final_model)
+lm_fit <- my_fit$fit
+summary(lm_fit)
+
+```
+
